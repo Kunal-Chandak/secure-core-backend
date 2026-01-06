@@ -21,8 +21,8 @@ app.listen(PORT, () => {
 }, '0.0.0.0');
 
 // ---------------- WebSocket Server ----------------
-const WS_PORT = process.env.WS_PORT || 8081;
-const wss = new WebSocketServer({ port: WS_PORT });
+// const PORT = process.env.PORT;
+const wss = new WebSocketServer({ port: PORT });
 
 // Map of roomHash to Set of WebSocket clients
 const roomClients = new Map();
