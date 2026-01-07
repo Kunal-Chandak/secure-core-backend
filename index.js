@@ -22,13 +22,36 @@ const server = app.listen(PORT, () => {
 
 // ---------------- WebSocket Server ----------------
 // Use the same server for WebSocket upgrades
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+  server,
+  // Add heartbeat settings
+  perMessageDeflate: false,
+  maxPayload: 1024 * 1024, // 1MB max payload
+});
 
 // Map of roomHash to Set of WebSocket clients
 const roomClients = new Map();
 
 wss.on("connection", (ws) => {
   console.log("🟢 New WebSocket connection");
+
+  // Set up ping/pong heartbeat
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === 1) { // OPEN
+      ws.ping();
+    }
+  }, 30000); // Ping every 30 seconds
+
+  // Handle pong responses
+  ws.on("pong", () => {
+    console.log("Received pong from client");
+  });
+
+  // Set connection timeout
+  const connectionTimeout = setTimeout(() => {
+    console.log("🔴 Connection timeout - closing WebSocket");
+    ws.terminate();
+  }, 5 * 60 * 1000); // 5 minutes timeout
 
   ws.on("message", async (rawData) => {
     try {
@@ -42,6 +65,8 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     console.log("🔴 WebSocket connection closed");
+    clearInterval(pingInterval);
+    clearTimeout(connectionTimeout);
     // Remove from all rooms
     for (const [roomHash, clients] of roomClients) {
       clients.delete(ws);
@@ -49,6 +74,12 @@ wss.on("connection", (ws) => {
         roomClients.delete(roomHash);
       }
     }
+  });
+
+  ws.on("error", (error) => {
+    console.error("🔴 WebSocket error:", error);
+    clearInterval(pingInterval);
+    clearTimeout(connectionTimeout);
   });
 });
 

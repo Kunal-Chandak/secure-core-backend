@@ -15,6 +15,26 @@ function base64Decode(str) {
  */
 export async function handleMessage(ws, data, wss, roomClients) {
   try {
+    // Handle ping messages for heartbeat
+    if (data === 'ping' || (typeof data === 'string' && data.trim() === 'ping')) {
+      console.log('Received ping, sending pong');
+      ws.send('pong');
+      return;
+    }
+
+    // Parse JSON data if it's not a ping
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch (parseError) {
+        console.error('Failed to parse message as JSON:', parseError);
+        ws.send(JSON.stringify({ success: false, error: "INVALID_MESSAGE" }));
+        return;
+      }
+    }
+
+    console.log('📨 Processing message type:', data.type || 'unknown');
+
     // Handle file messages (images, documents, etc.)
     if (data.type === 'image' || data.type === 'file') {
       console.log('📎 Processing file message:', data);
