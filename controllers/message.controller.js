@@ -78,7 +78,7 @@ export async function handleMessage(ws, data, wss, roomClients) {
       }
 
       // ACK sender
-      ws.send(JSON.stringify({ success: true }));
+      ws.send(JSON.stringify({ success: true, msgId }));
       return;
     }
 
