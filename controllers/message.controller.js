@@ -82,6 +82,72 @@ export async function handleMessage(ws, data, wss, roomClients) {
       return;
     }
 
+    // Handle delete message
+    if (data.type === 'delete_message') {
+      console.log('🗑️ Processing delete message:', data);
+      const { roomHash, messageId, senderId } = data;
+
+      // Basic validation
+      if (!roomHash || !messageId || !senderId) {
+        console.log('❌ Invalid delete payload - missing required fields');
+        ws.send(JSON.stringify({ success: false, error: "INVALID_PAYLOAD" }));
+        return;
+      }
+
+      // Validate room exists
+      const roomKey = `room:${roomHash}`;
+      const roomDataStr = await redis.get(roomKey);
+      if (!roomDataStr) {
+        console.log('❌ Room not found for delete message');
+        ws.send(JSON.stringify({ success: false, error: "ROOM_INVALID" }));
+        return;
+      }
+
+      // Add client to room if not already
+      if (!roomClients.has(roomHash)) {
+        roomClients.set(roomHash, new Set());
+      }
+      roomClients.get(roomHash).add(ws);
+
+      // Find and mark the message as deleted
+      const messagesKey = `room:${roomHash}:messages`;
+      const messages = await redis.lrange(messagesKey, 0, -1);
+      
+      let messageFound = false;
+      for (let i = 0; i < messages.length; i++) {
+        const msgData = JSON.parse(messages[i]);
+        if (msgData.msgId === messageId && msgData.senderId === senderId) {
+          // Mark message as deleted
+          msgData.deleted = true;
+          await redis.lset(messagesKey, i, JSON.stringify(msgData));
+          messageFound = true;
+          break;
+        }
+      }
+
+      if (!messageFound) {
+        console.log('❌ Message not found for deletion');
+        ws.send(JSON.stringify({ success: false, error: "MESSAGE_NOT_FOUND" }));
+        return;
+      }
+
+      // Broadcast delete message to all clients in room
+      console.log('📤 Broadcasting delete message to room:', roomHash);
+      wss.clients.forEach(client => {
+        if (client.readyState === 1 && client !== ws) {
+          client.send(JSON.stringify({
+            type: 'delete_message',
+            messageId,
+            senderId,
+          }));
+        }
+      });
+
+      // ACK sender
+      ws.send(JSON.stringify({ success: true }));
+      return;
+    }
+
     // Handle regular encrypted messages
     const {
       roomHash,
