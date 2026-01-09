@@ -16,9 +16,18 @@ app.use("/file", fileRoutes);
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => {
-  console.log(`🚀 SecureCore backend running on port ${PORT}`);
-  startPeriodicCleanup(); // Start S3 cleanup job
-}, '0.0.0.0');
+  console.log(`SecureCore backend running on port.`);
+  setImmediate(async () => {
+    try {
+      console.log("Starting periodic cleanup initialization...");
+      await startPeriodicCleanup();
+      console.log("Periodic cleanup initialized successfully");
+    } catch (error) {
+      console.error("Failed to start periodic cleanup:", error);
+      console.error("Stack trace:", error.stack);
+    }
+  });
+});
 
 // ---------------- WebSocket Server ----------------
 // Use the same server for WebSocket upgrades
@@ -33,7 +42,7 @@ const wss = new WebSocketServer({
 const roomClients = new Map();
 
 wss.on("connection", (ws) => {
-  console.log("🟢 New WebSocket connection");
+  console.log("New WebSocket connection");
 
   // Set up ping/pong heartbeat
   const pingInterval = setInterval(() => {
@@ -43,13 +52,13 @@ wss.on("connection", (ws) => {
   }, 30000); // Ping every 30 seconds
 
   // Handle pong responses
-  ws.on("pong", () => {
-    console.log("Received pong from client");
-  });
+  // ws.on("pong", () => {
+  //   console.log("Received pong from client");
+  // });
 
   // Set connection timeout
   const connectionTimeout = setTimeout(() => {
-    console.log("🔴 Connection timeout - closing WebSocket");
+    console.log("Connection timeout - closing WebSocket");
     ws.terminate();
   }, 5 * 60 * 1000); // 5 minutes timeout
 
@@ -64,7 +73,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    console.log("🔴 WebSocket connection closed");
+    console.log("WebSocket connection closed");
     clearInterval(pingInterval);
     clearTimeout(connectionTimeout);
     // Remove from all rooms
@@ -77,7 +86,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("error", (error) => {
-    console.error("🔴 WebSocket error:", error);
+    console.error("WebSocket error:", error);
     clearInterval(pingInterval);
     clearTimeout(connectionTimeout);
   });
@@ -85,4 +94,4 @@ wss.on("connection", (ws) => {
 
 export { roomClients };
 
-console.log(`🟢 WebSocket server is now running on the same port as HTTP.`);
+console.log(`WebSocket server is now running on the same port as HTTP.`);

@@ -20,7 +20,7 @@ let upload = null;
 upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024 , // 10MB limit
+    fileSize: 50 * 1024 * 1024 , // 50MB limit
   },
 });
 
@@ -39,7 +39,7 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
     // Test the S3 connection synchronously
     s3Client.send(new HeadBucketCommand({ Bucket: BUCKET_NAME }))
       .then(() => {
-        console.log("🟢 S3 client initialized and bucket accessible");
+        console.log("S3 client initialized and bucket accessible");
 
         // Configure multer S3 synchronously now
         upload = multer({
@@ -50,19 +50,19 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
               const { roomHash } = req.body;
               const fileId = crypto.randomUUID();
               const key = `rooms/${roomHash}/files/${fileId}.bin`;
-              console.log(`📤 Uploading to S3 key: ${key}`);
+              console.log(`Uploading to S3 key: ${key}`);
               cb(null, key);
             },
             acl: 'private',
           }),
           limits: {
-            fileSize: 10 * 1024 * 1024, // 10MB limit
+            fileSize: 50 * 1024 * 1024, // 50MB limit
           },
         });
-        console.log("🟢 Multer S3 storage configured synchronously");
+        console.log("Multer S3 storage configured synchronously");
       })
       .catch((bucketError) => {
-        console.log("⚠️ S3 client initialized but bucket access failed");
+        console.log("S3 client initialized but bucket access failed");
         console.log("   Error name:", bucketError.name);
         console.log("   Error message:", bucketError.message);
         console.log("   Bucket name:", BUCKET_NAME);
@@ -76,7 +76,7 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
   console.log("⚠️ AWS credentials not configured - file features disabled");
 }
 
-// Fallback multer configuration
+export { s3Client, BUCKET_NAME };
 if (!upload) {
   import("multer").then((multerModule) => {
     const multer = multerModule.default;
@@ -94,14 +94,14 @@ if (!upload) {
  */
 export const uploadImage = async (req, res) => {
   try {
-    console.log("📤 Starting image upload...");
+    console.log("Starting image upload...");
     console.log("   Room hash:", req.body.roomHash);
     console.log("   File present:", !!req.file);
     console.log("   S3 client available:", !!s3Client);
 
     // Check if S3 is configured
     if (!s3Client || !BUCKET_NAME) {
-      console.log("❌ S3 not configured");
+      console.log("S3 not configured");
       return res.status(503).json({
         success: false,
         error: "FILE_STORAGE_NOT_CONFIGURED"
@@ -111,7 +111,7 @@ export const uploadImage = async (req, res) => {
     const { roomHash, hmac, iv, authTag, fileName, fileSize } = req.body;
 
     if (!req.file || !roomHash || !hmac || !iv || !authTag) {
-      console.log("❌ Missing parameters");
+      console.log("Missing parameters");
       return res.status(400).json({
         success: false,
         error: "MISSING_PARAMETERS"
@@ -132,7 +132,7 @@ export const uploadImage = async (req, res) => {
     const room = JSON.parse(roomData);
     const now = DateTime.now();
 
-    console.log("🔍 Room data:", room); // Debug: check room data
+    console.log("Room data:", room); // Debug: check room data
 
     if (now > room.expiry_timestamp) {
       return res.status(410).json({
@@ -143,7 +143,7 @@ export const uploadImage = async (req, res) => {
 
     // Verify HMAC using derived key from room code and salt
     if (!room.room_code) {
-      console.log("❌ Room code not found in room data - room was created before code storage was added");
+      console.log("Room code not found in room data - room was created before code storage was added");
       return res.status(500).json({
         success: false,
         error: "ROOM_CODE_MISSING"
@@ -176,7 +176,7 @@ export const uploadImage = async (req, res) => {
     });
 
     await s3Client.send(uploadCommand);
-    console.log(`📤 Uploaded to S3 key: ${s3Key}`);
+    console.log(`Uploaded to S3 key: ${s3Key}`);
 
     // Store metadata in Redis with same TTL as room
     const ttl = Math.ceil((room.expiry_timestamp - now) / 1000);
@@ -184,7 +184,7 @@ export const uploadImage = async (req, res) => {
 
     // Validate TTL
     if (ttl <= 0 || ttl > 2147483647) { // Redis max TTL is 2^31 - 1 seconds
-      console.log("❌ Invalid TTL:", ttl);
+      console.log("Invalid TTL:", ttl);
       return res.status(400).json({
         success: false,
         error: "INVALID_ROOM_EXPIRY"
@@ -201,7 +201,7 @@ export const uploadImage = async (req, res) => {
       authTag,
     };
 
-    console.log("📤 Storing metadata:", fileMetadata);
+    console.log("Storing metadata:", fileMetadata);
 
     await redis.set(
       `file:${roomHash}:${fileId}`,
@@ -270,8 +270,8 @@ export const downloadFile = async (req, res) => {
     }
 
     const metadata = JSON.parse(fileData);
-    console.log('📥 Download metadata:', metadata);
-    console.log('📥 S3 key:', metadata.s3Key);
+    console.log('Download metadata:', metadata);
+    console.log('S3 key:', metadata.s3Key);
 
     if (!metadata.s3Key) {
       return res.status(500).json({
@@ -321,7 +321,7 @@ export const cleanupRoomFiles = async (roomHash) => {
   try {
     // Skip if S3 is not configured
     if (!s3Client || !BUCKET_NAME) {
-      console.log("⚠️ S3 not configured - skipping file cleanup");
+      console.log("S3 not configured - skipping file cleanup");
       return;
     }
 
@@ -330,7 +330,7 @@ export const cleanupRoomFiles = async (roomHash) => {
     const keys = await redis.keys(pattern);
 
     if (keys.length === 0) {
-      console.log(`📭 No files to cleanup for room ${roomHash}`);
+      console.log(`No files to cleanup for room ${roomHash}`);
       return;
     }
 
@@ -341,7 +341,7 @@ export const cleanupRoomFiles = async (roomHash) => {
       if (fileData) {
         const metadata = JSON.parse(fileData);
         s3Keys.push({ Key: metadata.s3Key });
-        console.log(`🗑️ Queuing S3 deletion: ${metadata.s3Key}`);
+        console.log(`Queuing S3 deletion: ${metadata.s3Key}`);
       }
     }
 
@@ -355,12 +355,12 @@ export const cleanupRoomFiles = async (roomHash) => {
       });
 
       await s3Client.send(deleteCommand);
-      console.log(`🗑️ Deleted ${s3Keys.length} files from S3 for room ${roomHash}`);
+      console.log(`Deleted ${s3Keys.length} files from S3 for room ${roomHash}`);
     }
 
     // Delete metadata from Redis
     await redis.del(keys);
-    console.log(`🗑️ Deleted ${keys.length} file metadata entries for room ${roomHash}`);
+    console.log(`Deleted ${keys.length} file metadata entries for room ${roomHash}`);
 
   } catch (error) {
     console.error("Cleanup error:", error);

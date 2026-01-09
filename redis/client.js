@@ -16,11 +16,11 @@ const redis = new Redis(process.env.REDIS_URL, {
 
 
 redis.on("connect", () => {
-  console.log("🟢 Redis connected (Upstash)");
+  console.log("Redis connected (Upstash)");
 });
 
 redis.on("error", (err) => {
-  console.error("🔴 Redis error:", err.message);
+  console.error("Redis error:", err.message);
 });
 
 export default redis;

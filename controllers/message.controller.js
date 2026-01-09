@@ -33,7 +33,7 @@ export async function handleMessage(ws, data, wss, roomClients) {
       }
     }
 
-    console.log('📨 Processing message type:', data.type || 'unknown');
+    console.log('Processing message type:', data.type || 'unknown');
 
     // Handle file messages (images, documents, etc.)
     if (data.type === 'image' || data.type === 'file') {
@@ -43,7 +43,7 @@ export async function handleMessage(ws, data, wss, roomClients) {
 
       // Basic validation for file messages
       if (!roomHash || !fileIdentifier || !senderId) {
-        console.log('❌ Invalid file payload - missing required fields');
+        console.log('Invalid file payload - missing required fields');
         ws.send(JSON.stringify({ success: false, error: "INVALID_PAYLOAD" }));
         return;
       }
@@ -52,7 +52,7 @@ export async function handleMessage(ws, data, wss, roomClients) {
       const roomKey = `room:${roomHash}`;
       const roomDataStr = await redis.get(roomKey);
       if (!roomDataStr) {
-        console.log('❌ Room not found for file message');
+        console.log('Room not found for file message');
         ws.send(JSON.stringify({ success: false, error: "ROOM_INVALID" }));
         return;
       }
@@ -64,19 +64,22 @@ export async function handleMessage(ws, data, wss, roomClients) {
       roomClients.get(roomHash).add(ws);
 
       // Broadcast file message to all clients in room
-      console.log('📤 Broadcasting file message to room:', roomHash);
-      wss.clients.forEach(client => {
-        if (client.readyState === 1 && client !== ws) {
-          client.send(JSON.stringify({
-            type: type,
-            roomHash,
-            imageId: imageId,
-            fileId: fileId,
-            fileName,
-            senderId,
-          }));
-        }
-      });
+      console.log('Broadcasting file message to room:', roomHash);
+      const roomClientsSet = roomClients.get(roomHash);
+      if (roomClientsSet) {
+        roomClientsSet.forEach(client => {
+          if (client.readyState === 1 && client !== ws) {
+            client.send(JSON.stringify({
+              type: type,
+              roomHash,
+              imageId: imageId,
+              fileId: fileId,
+              fileName,
+              senderId,
+            }));
+          }
+        });
+      }
 
       // Store file message
       const msgId = crypto.randomUUID();
@@ -104,12 +107,12 @@ export async function handleMessage(ws, data, wss, roomClients) {
 
     // Handle delete message
     if (data.type === 'delete_message') {
-      console.log('🗑️ Processing delete message:', data);
+      console.log('Processing delete message:', data);
       const { roomHash, messageId, senderId } = data;
 
       // Basic validation
       if (!roomHash || !messageId || !senderId) {
-        console.log('❌ Invalid delete payload - missing required fields');
+        console.log('Invalid delete payload - missing required fields');
         ws.send(JSON.stringify({ success: false, error: "INVALID_PAYLOAD" }));
         return;
       }
@@ -118,7 +121,7 @@ export async function handleMessage(ws, data, wss, roomClients) {
       const roomKey = `room:${roomHash}`;
       const roomDataStr = await redis.get(roomKey);
       if (!roomDataStr) {
-        console.log('❌ Room not found for delete message');
+        console.log('Room not found for delete message');
         ws.send(JSON.stringify({ success: false, error: "ROOM_INVALID" }));
         return;
       }
@@ -146,22 +149,25 @@ export async function handleMessage(ws, data, wss, roomClients) {
       }
 
       if (!messageFound) {
-        console.log('❌ Message not found for deletion');
+        console.log('Message not found for deletion');
         ws.send(JSON.stringify({ success: false, error: "MESSAGE_NOT_FOUND" }));
         return;
       }
 
       // Broadcast delete message to all clients in room
-      console.log('📤 Broadcasting delete message to room:', roomHash);
-      wss.clients.forEach(client => {
-        if (client.readyState === 1 && client !== ws) {
-          client.send(JSON.stringify({
-            type: 'delete_message',
-            messageId,
-            senderId,
-          }));
-        }
-      });
+      console.log('Broadcasting delete message to room:', roomHash);
+      const roomClientsSet = roomClients.get(roomHash);
+      if (roomClientsSet) {
+        roomClientsSet.forEach(client => {
+          if (client.readyState === 1 && client !== ws) {
+            client.send(JSON.stringify({
+              type: 'delete_message',
+              messageId,
+              senderId,
+            }));
+          }
+        });
+      }
 
       // ACK sender
       ws.send(JSON.stringify({ success: true }));
@@ -281,19 +287,22 @@ export async function handleMessage(ws, data, wss, roomClients) {
     }
 
     // ---- Broadcast encrypted blob ----
-    wss.clients.forEach(client => {
-      if (client.readyState === 1 && client !== ws) {
-        client.send(JSON.stringify({
-          roomHash,
-          msgId,
-          ciphertext,
-          iv,
-          authTag,
-          hmac,
-          senderId,
-        }));
-      }
-    });
+    const roomClientsSet = roomClients.get(roomHash);
+    if (roomClientsSet) {
+      roomClientsSet.forEach(client => {
+        if (client.readyState === 1 && client !== ws) {
+          client.send(JSON.stringify({
+            roomHash,
+            msgId,
+            ciphertext,
+            iv,
+            authTag,
+            hmac,
+            senderId,
+          }));
+        }
+      });
+    }
 
     // ---- ACK sender ----
     ws.send(JSON.stringify({ success: true, msgId }));

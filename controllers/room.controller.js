@@ -1,6 +1,9 @@
 import redis from "../redis/client.js";
 import crypto from "crypto";
-import { cleanupRoomFiles } from "./file.controller.js";
+import dotenv from 'dotenv';
+import { cleanupRoomFiles, s3Client, BUCKET_NAME } from "./file.controller.js";
+
+dotenv.config();
 
 /**
  * POST /room/create
@@ -86,6 +89,8 @@ export async function joinRoom(req, res) {
 
     const exists = await redis.exists(redisKey);
     if (!exists) {
+      // Room not found, clean up files
+      await cleanupRoomFiles(roomHash);
       return res.status(404).json({
         success: false,
         error: "ROOM_NOT_FOUND",
@@ -94,6 +99,8 @@ export async function joinRoom(req, res) {
 
     const ttl = await redis.ttl(redisKey);
     if (ttl <= 0) {
+      // Room expired, clean up files
+      await cleanupRoomFiles(roomHash);
       return res.status(410).json({
         success: false,
         error: "ROOM_EXPIRED",
@@ -139,6 +146,8 @@ export async function getRoomInfo(req, res) {
     const roomDataStr = await redis.get(redisKey);
 
     if (!roomDataStr) {
+      // Room expired or not found, clean up files
+      await cleanupRoomFiles(room_hash);
       return res.status(404).json({
         success: false,
         error: "ROOM_NOT_FOUND",
@@ -170,7 +179,7 @@ export async function getRoomInfo(req, res) {
  */
 export async function getRoomMessages(req, res) {
   try {
-    const { room_hash } = req.body;
+    const { room_hash, page = 0, limit = 50 } = req.body;
 
     if (!room_hash) {
       return res.status(400).json({
@@ -179,14 +188,37 @@ export async function getRoomMessages(req, res) {
       });
     }
 
-    const messagesKey = `room:${room_hash}:messages`;
-    const messages = await redis.lrange(messagesKey, 0, -1);
+    const redisKey = `room:${room_hash}`;
+    const roomExists = await redis.exists(redisKey);
 
+    if (!roomExists) {
+      // Room expired or not found, clean up files
+      await cleanupRoomFiles(room_hash);
+      return res.status(404).json({
+        success: false,
+        error: "ROOM_NOT_FOUND",
+      });
+    }
+
+    const messagesKey = `room:${room_hash}:messages`;
+    const totalMessages = await redis.llen(messagesKey);
+
+    // Calculate start and end indices for pagination
+    const start = page * limit;
+    const end = start + limit - 1;
+
+    const messages = await redis.lrange(messagesKey, start, end);
     const parsedMessages = messages.map(msg => JSON.parse(msg)).reverse(); // reverse to get chronological order
 
     return res.json({
       success: true,
       messages: parsedMessages,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalMessages,
+        hasMore: totalMessages > (page + 1) * limit,
+      },
     });
   } catch (err) {
     console.error("Get room messages error:", err);
@@ -264,48 +296,80 @@ export async function burnRoom(req, res) {
  * Called every 5 minutes to clean up orphaned S3 files
  */
 export async function startPeriodicCleanup() {
-  const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+  const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
   setInterval(async () => {
     try {
-      console.log("🧹 Starting periodic S3 cleanup...");
-      
-      // Get all file metadata keys
-      const fileKeys = await redis.keys("file:*:*");
-      
-      if (fileKeys.length === 0) {
-        console.log("✅ No files to cleanup");
+      console.log("Starting periodic S3 cleanup...");
+
+      // Skip if S3 is not configured
+      if (!s3Client || !BUCKET_NAME) {
+        console.log("S3 not configured - skipping cleanup");
         return;
       }
 
+      // Import S3 commands dynamically to avoid startup errors
+      const { ListObjectsV2Command, DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
+
+      // List all objects in the bucket with prefix 'rooms/'
+      const listCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: 'rooms/',
+      });
+
+      const listResponse = await s3Client.send(listCommand);
+      const objects = listResponse.Contents || [];
+
+      if (objects.length === 0) {
+        console.log("No files to cleanup");
+        return;
+      }
+
+      // Group objects by roomHash
+      const roomFiles = {};
+      for (const obj of objects) {
+        const key = obj.Key;
+        const parts = key.split('/');
+        if (parts.length >= 2 && parts[0] === 'rooms') {
+          const roomHash = parts[1];
+          if (!roomFiles[roomHash]) {
+            roomFiles[roomHash] = [];
+          }
+          roomFiles[roomHash].push(key);
+        }
+      }
+
+      console.log(`Found room hashes in S3: ${Object.keys(roomFiles).join(', ')}`);
+
       let cleanedCount = 0;
 
-      for (const fileKey of fileKeys) {
-        const fileData = await redis.get(fileKey);
-        
-        // If file metadata doesn't exist in Redis, it has expired
-        // We need to clean up the corresponding S3 file
-        if (!fileData) {
-          // Extract roomHash from key format: file:roomHash:fileId
-          const parts = fileKey.split(":");
-          if (parts.length >= 3) {
-            const roomHash = parts[1];
-            
-            // Check if room still exists
-            const roomKey = `room:${roomHash}`;
-            const roomExists = await redis.exists(roomKey);
-            
-            if (!roomExists) {
-              // Room has expired, cleanup all its files
-              await cleanupRoomFiles(roomHash);
-              cleanedCount++;
-            }
-          }
+      for (const roomHash in roomFiles) {
+        // Check if room still exists in Redis
+        const roomKey = `room:${roomHash}`;
+        const roomExists = await redis.exists(roomKey);
+
+        if (!roomExists) {
+          console.log(`Deleting files for expired room: ${roomHash}`);
+          // Room has expired, delete all its files from S3
+          const s3Keys = roomFiles[roomHash].map(key => ({ Key: key }));
+
+          const deleteCommand = new DeleteObjectsCommand({
+            Bucket: BUCKET_NAME,
+            Delete: {
+              Objects: s3Keys,
+            },
+          });
+
+          await s3Client.send(deleteCommand);
+          console.log(`Deleted ${s3Keys.length} files from S3 for room ${roomHash}`);
+          cleanedCount++;
+        } else {
+          console.log(`Room ${roomHash} still exists, skipping cleanup`);
         }
       }
 
       if (cleanedCount > 0) {
-        console.log(`✅ Cleaned up S3 files for ${cleanedCount} expired rooms`);
+        console.log(`Cleaned up S3 files for ${cleanedCount} expired rooms`);
       }
     } catch (error) {
       console.error("Periodic cleanup error:", error);
