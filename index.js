@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import roomRoutes from "./routes/room.routes.js";
 import fileRoutes from "./routes/file.routes.js";
+import pingRoutes from "./routes/ping.routes.js";
 import { WebSocketServer } from "ws";
 import { handleMessage } from "./controllers/message.controller.js";
 import { startPeriodicCleanup } from "./controllers/room.controller.js";
@@ -13,6 +14,7 @@ app.use(express.json());
 
 app.use("/room", roomRoutes);
 app.use("/file", fileRoutes);
+app.use("/ping", pingRoutes);
 
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => {
