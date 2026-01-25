@@ -20,7 +20,7 @@ let upload = null;
 upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024 , // 50MB limit
+    fileSize: 100 * 1024 * 1024 , // 100MB limit
   },
 });
 
@@ -56,7 +56,7 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
             acl: 'private',
           }),
           limits: {
-            fileSize: 50 * 1024 * 1024, // 50MB limit
+            fileSize: 100 * 1024 * 1024, // 100MB limit
           },
         });
         console.log("Multer S3 storage configured synchronously");
@@ -83,7 +83,7 @@ if (!upload) {
     upload = multer({
       storage: multer.memoryStorage(),
       limits: {
-        fileSize: 50 * 1024 * 1024, // 50MB limit
+        fileSize: 100 * 1024 * 1024, // 100MB limit
       },
     });
   });
