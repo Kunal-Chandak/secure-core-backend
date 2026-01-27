@@ -296,7 +296,7 @@ export async function burnRoom(req, res) {
  * Called every 5 minutes to clean up orphaned S3 files
  */
 export async function startPeriodicCleanup() {
-  const CLEANUP_INTERVAL = 10 * 60 * 1000; // 10 minutes
+  const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hr
 
   setInterval(async () => {
     try {

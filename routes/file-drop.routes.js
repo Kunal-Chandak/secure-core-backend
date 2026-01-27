@@ -4,6 +4,7 @@ import {
   uploadFileDrop,
   validateDropCode,
   downloadFileDrop,
+  cleanupExpiredDrops,
   upload,
 } from "../controllers/file-drop.controller.js";
 
@@ -41,5 +42,28 @@ router.post("/validate", validateDropCode);
  * Response: Encrypted file binary + headers (IV, AuthTag, FileName)
  */
 router.get("/:fileId", downloadFileDrop);
+
+/**
+ * POST /file-drop/admin/cleanup
+ * Manually trigger cleanup of expired file drops
+ * Response: { success: true, message }
+ */
+router.post("/admin/cleanup", async (req, res) => {
+  try {
+    console.log('🔧 Manual cleanup triggered via API');
+    await cleanupExpiredDrops();
+    res.json({
+      success: true,
+      message: "File drop cleanup completed. Check server logs for details."
+    });
+  } catch (error) {
+    console.error("Manual cleanup failed:", error);
+    res.status(500).json({
+      success: false,
+      error: "CLEANUP_FAILED",
+      message: error.message
+    });
+  }
+});
 
 export default router;

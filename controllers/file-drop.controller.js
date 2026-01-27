@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import dotenv from 'dotenv';
 import multer from "multer";
 import crypto from "crypto";
@@ -44,6 +44,27 @@ if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
 export { s3Client, BUCKET_NAME, upload };
 
 /**
+ * Start periodic cleanup of expired file drops
+ * Runs every 5 minutes
+ */
+export const startFileDropCleanup = async () => {
+  console.log('Starting file drop cleanup scheduler...');
+  
+  // Run cleanup immediately on startup
+  console.log('Running initial cleanup...');
+  await cleanupExpiredDrops();
+  
+  // Then run every 5 minutes
+  const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hr
+  setInterval(async () => {
+    console.log('\nRunning periodic file drop cleanup...');
+    await cleanupExpiredDrops();
+  }, CLEANUP_INTERVAL);
+  
+  console.log(`File drop cleanup scheduler started`);
+};
+
+/**
  * POST /file-drop/create
  * Create a new file drop session
  * Receives: dropHash (SHA256 hash, generated on frontend - plaintext never sent)
@@ -82,13 +103,28 @@ export const createFileDrop = async (req, res) => {
       '24h': 24 * 60 * 60,
     };
 
-    const ttl = durationMap[duration];
-
-    if (!ttl) {
+    let ttl;
+    
+    if (durationMap[duration]) {
+      // Preset durations
+      ttl = durationMap[duration];
+    } else if (duration.endsWith('m')) {
+      // Custom duration in minutes
+      const minutes = parseInt(duration);
+      if (isNaN(minutes) || minutes < 1 || minutes > 2880) {
+        // 2880 minutes = 2 days
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_DURATION",
+          message: "Duration must be between 1m and 2880m (1 minute to 2 days)"
+        });
+      }
+      ttl = minutes * 60; // Convert to seconds
+    } else {
       return res.status(400).json({
         success: false,
         error: "INVALID_DURATION",
-        message: "Duration must be 10m, 1h, or 24h"
+        message: "Duration must be 10m, 1h, 24h, or custom minutes (1m-2880m)"
       });
     }
 
@@ -484,8 +520,8 @@ export const downloadFileDrop = async (req, res) => {
 };
 
 /**
- * Cleanup expired file drops
- * Called periodically or on demand
+ * Cleanup orphaned file drops in S3
+ * Removes S3 files that no longer have corresponding Redis keys
  */
 export const cleanupExpiredDrops = async () => {
   try {
@@ -494,59 +530,97 @@ export const cleanupExpiredDrops = async () => {
       return;
     }
 
-    // Get all drop keys
-    const pattern = 'drop:*';
-    const keys = await redis.keys(pattern);
+    // List all file-drop objects in S3
+    const listCommand = new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: 'file-drops/',
+    });
 
-    if (keys.length === 0) {
-      console.log("No drops to cleanup");
+    const response = await s3Client.send(listCommand);
+    const s3Files = response.Contents || [];
+
+    if (s3Files.length === 0) {
+      console.log("No file-drop objects to cleanup");
       return;
     }
 
-    let cleanedCount = 0;
-    let deletedRedisCount = 0;
+    console.log(`Found ${s3Files.length} file-drop objects in S3`);
 
-    for (const key of keys) {
-      const dropData = await redis.get(key);
-      if (dropData) {
-        const drop = JSON.parse(dropData);
-        
-        // Check if expired
-        const expiryTime = DateTime.fromISO(drop.expiryTimestamp);
-        const now = DateTime.now();
-        
-        if (now > expiryTime) {
-          // Delete S3 file if it exists
-          if (drop.s3Key) {
-            try {
-              const deleteCommand = new DeleteObjectCommand({
-                Bucket: BUCKET_NAME,
-                Key: drop.s3Key,
-              });
-              
-              await s3Client.send(deleteCommand);
-              console.log(`🧹 Deleted expired file from S3: ${drop.s3Key}`);
-              cleanedCount++;
-            } catch (deleteError) {
-              console.error(`Failed to delete expired drop file ${drop.s3Key}:`, deleteError);
+    let deletedCount = 0;
+    const filesToDelete = [];
+
+    // Check each S3 file for corresponding Redis key
+    for (const s3Object of s3Files) {
+      const s3Key = s3Object.Key;
+      const pathParts = s3Key.split('/');
+
+      if (pathParts.length < 3 || pathParts[0] !== 'file-drops') {
+        continue;
+      }
+
+      const dropHashPrefix = pathParts[1];
+      let redisKeyExists = false;
+
+      // Search Redis for matching key
+      let cursor = '0';
+      do {
+        try {
+          const [newCursor, keys] = await redis.scan(cursor, 'MATCH', `drop:${dropHashPrefix}*`, 'COUNT', 10);
+          cursor = newCursor;
+
+          if (keys && keys.length > 0) {
+            for (const redisKey of keys) {
+              const redisData = await redis.get(redisKey);
+              if (redisData) {
+                const dropData = JSON.parse(redisData);
+                if (dropData.s3Key === s3Key) {
+                  redisKeyExists = true;
+                  break;
+                }
+              }
             }
+            if (redisKeyExists) break;
           }
-
-          // Delete the Redis key
-          try {
-            await redis.del(key);
-            console.log(`🗑️  Deleted expired Redis key: ${key}`);
-            deletedRedisCount++;
-          } catch (redisError) {
-            console.error(`Failed to delete Redis key ${key}:`, redisError);
-          }
+        } catch (err) {
+          console.error("Redis scan error:", err.message);
+          break;
         }
+      } while (cursor !== '0' && !redisKeyExists);
+
+      // If no Redis key found, mark for deletion
+      if (!redisKeyExists) {
+        filesToDelete.push({ Key: s3Key });
+        deletedCount++;
       }
     }
 
-    console.log(`✅ Cleanup complete: Deleted ${cleanedCount} S3 files and ${deletedRedisCount} Redis keys`);
+    // Delete orphaned files in batch
+    if (filesToDelete.length > 0) {
+      console.log(`Deleting ${deletedCount} orphaned file-drop objects from S3`);
+      
+      const deleteCommand = new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Delete: {
+          Objects: filesToDelete,
+        },
+      });
+
+      // Delete one by one since S3 API expects single DeleteObjectCommand for batch
+      for (const file of filesToDelete) {
+        try {
+          await s3Client.send(new DeleteObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: file.Key,
+          }));
+        } catch (err) {
+          console.error(`Failed to delete ${file.Key}:`, err.message);
+        }
+      }
+
+      console.log(`Cleaned up ${deletedCount} orphaned file-drop objects from S3`);
+    }
 
   } catch (error) {
-    console.error("File drop cleanup error:", error);
+    console.error("File drop cleanup error:", error.message);
   }
 };

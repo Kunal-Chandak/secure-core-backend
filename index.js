@@ -7,6 +7,7 @@ import pingRoutes from "./routes/ping.routes.js";
 import { WebSocketServer } from "ws";
 import { handleMessage } from "./controllers/message.controller.js";
 import { startPeriodicCleanup } from "./controllers/room.controller.js";
+import { startFileDropCleanup } from "./controllers/file-drop.controller.js";
 
 dotenv.config();
 
@@ -25,9 +26,18 @@ const server = app.listen(PORT, () => {
     try {
       console.log("Starting periodic cleanup initialization...");
       await startPeriodicCleanup();
-      console.log("Periodic cleanup initialized successfully");
+      console.log("Room periodic cleanup initialized successfully");
     } catch (error) {
-      console.error("Failed to start periodic cleanup:", error);
+      console.error("Failed to start room periodic cleanup:", error);
+      console.error("Stack trace:", error.stack);
+    }
+
+    try {
+      console.log("\nStarting file drop cleanup initialization...");
+      await startFileDropCleanup();
+      console.log("File drop cleanup initialized successfully");
+    } catch (error) {
+      console.error("Failed to start file drop cleanup:", error);
       console.error("Stack trace:", error.stack);
     }
   });
