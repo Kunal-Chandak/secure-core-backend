@@ -19,7 +19,7 @@ app.use("/file", fileRoutes);
 app.use("/file-drop", fileDropRoutes);
 app.use("/ping", pingRoutes);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 const server = app.listen(PORT, () => {
   console.log(`SecureCore backend running on port.`);
   setImmediate(async () => {
@@ -33,7 +33,7 @@ const server = app.listen(PORT, () => {
     }
 
     try {
-      console.log("\nStarting file drop cleanup initialization...");
+      console.log("Starting file drop cleanup initialization...");
       await startFileDropCleanup();
       console.log("File drop cleanup initialized successfully");
     } catch (error) {
