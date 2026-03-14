@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import cors from "cors";
 import roomRoutes from "./routes/room.routes.js";
 import fileRoutes from "./routes/file.routes.js";
 import fileDropRoutes from "./routes/file-drop.routes.js";
@@ -12,6 +13,7 @@ import { startFileDropCleanup } from "./controllers/file-drop.controller.js";
 dotenv.config();
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 app.use("/room", roomRoutes);
