@@ -114,8 +114,9 @@ export async function joinRoom(req, res) {
       success: true,
       room_hash: roomHash,
       room_code: metadata.room_code,
-      room_salt: metadata.room_salt,     // ✅ NOW EXISTS
+      room_salt: metadata.room_salt,
       expiry_timestamp: metadata.expiry_timestamp,
+      creator_id: metadata.creator_id,
       createdAt: metadata.createdAt,
     });
   } catch (err) {
